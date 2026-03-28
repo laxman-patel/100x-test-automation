@@ -1,0 +1,56 @@
+{
+  "name": "smoke-extension-toggle",
+  "description": "Checks that the extension injects its toggle button into a normal web page.",
+  "settings": {
+    "url": "https://example.com"
+  },
+  "steps": [
+    {
+      "action": "open"
+    },
+    {
+      "action": "wait",
+      "waitFor": 1500
+    },
+    {
+      "action": "snapshot",
+      "interactive": true
+    },
+    {
+      "action": "assertSnapshotContains",
+      "text": "Learn more"
+    },
+    {
+      "action": "assertSnapshotContains",
+      "text": "Toggle Menu - Drag dots to move",
+      "optional": true
+    },
+    {
+      "action": "openNewTab",
+      "url": "chrome-extension://kipkglfnhnpbogckhlmikjlfpbngnioc/src/pages/agent/index.html"
+    },
+    {
+      "action": "wait",
+      "waitFor": 1000
+    },
+    {
+      "action": "snapshot",
+      "interactive": true
+    },
+    {
+      "action": "consoleLogs",
+      "path": "artifacts/smoke-extension-console.json"
+    },
+    {
+      "action": "wait",
+      "waitFor": 500
+    },
+    {
+      "action": "screenshot",
+      "path": "artifacts/smoke-extension-toggle.png"
+    },
+    {
+      "action": "close"
+    }
+  ]
+}

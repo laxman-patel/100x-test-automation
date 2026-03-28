@@ -1,0 +1,150 @@
+{
+  "manifest_version": 3,
+  "name": "100xBot",
+  "description": "AI-powered browser assistant with multi-model LLM support for web automation, data extraction, and intelligent workflows",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAy6OFY0GV1jrkVnH7OcEV9pnW0AU1pJiSHmY9WTHF7kE19fwk0bKhUd7pX8liu1G5IY4saxwg4Y7S+o122FRqsfIMv0FKwnTfQ/WIztcupMvbEPWwaX3/v9oC2jL2++rpNhW0aFxzyvxiB8OCAttHU6WSC4zUplhBs3X33V+w0+opko7L1RR4UkcE7R6vrEMjbtlCLKKTXQYa7+nTfFlvohQctMwrW6CrzA34bfAGwlvGq6l8A2A8ghBV95SXHs40Cd5X2Eg2GP0aluoGOVAUWAMnEveLFrv3aJR+XDqKOGGVn872He8/pVU02kFBRRU3zjH+Kp/phM4e8g3+Cbee8wIDAQAB",
+  "options_ui": {
+    "page": "src/pages/options/index.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "sidePanel",
+    "storage",
+    "scripting",
+    "tabs",
+    "history",
+    "debugger",
+    "offscreen",
+    "power",
+    "webNavigation",
+    "tabCapture",
+    "desktopCapture",
+    "downloads",
+    "cookies",
+    "webRequest",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+    "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-inline'; object-src 'self';"
+  },
+  "sandbox": {
+    "pages": [
+      "public/sandbox.html"
+    ]
+  },
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/index.tsx-loader-CKiTEq8T.js"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "<all_urls>"
+      ],
+      "css": [
+        "contentStyle.css"
+      ],
+      "all_frames": true
+    }
+  ],
+  "devtools_page": "src/pages/devtools/index.html",
+  "side_panel": {
+    "default_path": "src/pages/agent/index.html"
+  },
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": [
+        "public/sandbox.html",
+        "contentStyle.css",
+        "icon-16.png",
+        "icon-32.png",
+        "icon-48.png",
+        "icon-128.png",
+        "favicon.ico",
+        "src/pages/agent/index.html",
+        "src/pages/data/index.html",
+        "src/pages/ai-ui/index.html",
+        "src/pages/offscreen/index.html",
+        "magick.wasm",
+        "postgres.wasm",
+        "postgres.data",
+        "mupdf-wasm.wasm",
+        "7zz.wasm",
+        "perspective-server.wasm",
+        "perspective-viewer.wasm",
+        "pg_trgm.tar.gz",
+        "fuzzystrmatch.tar.gz",
+        "uuid-ossp.tar.gz",
+        "hstore.tar.gz",
+        "ltree.tar.gz",
+        "tablefunc.tar.gz",
+        "citext.tar.gz",
+        "fonts/arial.ttf",
+        "fonts/arial-bold.ttf",
+        "fonts/times.ttf",
+        "fonts/times-bold-italic.ttf",
+        "fonts/mono.ttf"
+      ],
+      "use_dynamic_url": false
+    },
+    {
+      "matches": [
+        "<all_urls>",
+        "http://*/*",
+        "https://*/*"
+      ],
+      "resources": [
+        "assets/index-CWKyzOfw.js",
+        "assets/_commonjsHelpers-D6-XlEtG.js",
+        "assets/HundredxUISchema-BmxvFDm6.js",
+        "assets/_commonjs-dynamic-modules-TDtrdbi3.js",
+        "assets/___vite-browser-external_commonjs-proxy-CTpUEZaD.js",
+        "src/pages/content/index.tsx.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:*/*",
+      "https://localhost:*/*",
+      "http://127.0.0.1:*/*",
+      "https://127.0.0.1:*/*",
+      "https://*.100x.bot/*",
+      "https://100x.bot/*",
+      "https://*.google.com/*",
+      "http://localhost/*",
+      "https://localhost/*"
+    ],
+    "ids": [
+      "*"
+    ]
+  },
+  "version": "1.5.24"
+}
