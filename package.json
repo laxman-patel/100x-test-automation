@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "bun run src/cli-run.ts",
     "run:scenario": "bun run src/cli-run.ts",
     "run:extension-prompt": "bun run src/scripts/type-extension-prompt.ts",
     "capture:auth-state": "bun run src/scripts/capture-auth-state.ts",

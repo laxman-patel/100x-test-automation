@@ -18,6 +18,7 @@ export async function retryOnTransient(
   fn: () => Promise<CommandResult>,
   maxAttempts = 3,
   delayMs = 500,
+  log?: (line: string) => void,
 ): Promise<CommandResult> {
   let last: CommandResult | undefined
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -25,7 +26,9 @@ export async function retryOnTransient(
     if (last.exitCode === 0) return last
     const output = `${last.stderr}\n${last.stdout}`
     if (!isTransientError(output) || attempt === maxAttempts) return last
-    await new Promise((r) => setTimeout(r, delayMs * attempt))
+    const backoff = delayMs * attempt
+    log?.(`transient error on attempt ${attempt}/${maxAttempts}, retrying in ${backoff}ms`)
+    await new Promise((r) => setTimeout(r, backoff))
   }
   return last!
 }

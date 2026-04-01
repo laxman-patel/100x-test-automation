@@ -8,6 +8,8 @@ import { loadScenario, resolveScenarioPath, type Scenario } from "./scenario"
 export interface RunScenarioOptions {
   extensionPath?: string
   session?: string
+  headed?: boolean
+  stepRetries?: number
   onLog?: (line: string) => void
 }
 
@@ -165,6 +167,37 @@ async function waitForCdpReady(port: number, timeoutMs = 30_000): Promise<void> 
   throw new Error(`Timed out waiting for CDP on port ${port}`)
 }
 
+/**
+ * Pre-flight check: verify that required external tools are available before
+ * starting a scenario run. Fails fast with a clear message instead of a
+ * confusing ENOENT half-way through execution.
+ */
+export async function preflight(log?: (line: string) => void): Promise<void> {
+  const res = await runCommand(["agent-browser", "--help"], 10_000)
+  if (res.exitCode !== 0 && res.exitCode !== 124) {
+    throw new Error(
+      "Pre-flight failed: `agent-browser` is not available on PATH.\n" +
+        "Install it and try again.",
+    )
+  }
+  log?.("preflight: agent-browser found ✓")
+}
+
+async function handleDaemonConflict(
+  client: AgentBrowserClient,
+  prefix: string,
+  url: string,
+  log: (line: string) => void,
+): Promise<import("./shell").CommandResult> {
+  log(`${prefix}: daemon conflict detected, forcing restart and retrying once`)
+  await hardResetAgentBrowser(log)
+  const seedOpen = await client.open("https://example.com")
+  if (seedOpen.exitCode !== 0) {
+    throw new Error(`${prefix} retry seed open failed: ${seedOpen.stderr || seedOpen.stdout}`)
+  }
+  return client.openNewTab(url)
+}
+
 function scenarioNeedsExtensionPage(scenario: Scenario): boolean {
   if ((scenario.settings?.url ?? "").startsWith("chrome-extension://")) {
     return true
@@ -191,7 +224,8 @@ export async function runScenario(
 
   const extensionPath = resolve(process.cwd(), opts.extensionPath ?? "100x-extension-build")
   const session = opts.session ?? `workflow-test-${Date.now()}`
-  const headed = true
+  const headed = opts.headed ?? true
+  const stepRetries = opts.stepRetries ?? 0
   const needsExtensionTab = scenarioNeedsExtensionPage(scenario)
   const cdpPort = Number(process.env.RUNNER_CDP_PORT ?? 9223)
 
@@ -240,20 +274,52 @@ export async function runScenario(
 
   let lastSnapshot = ""
 
+  // --- Graceful shutdown on SIGINT / SIGTERM ---
+  let aborted = false
+  const cleanup = async () => {
+    if (aborted) return
+    aborted = true
+    log("Received shutdown signal — cleaning up…")
+    try { await client.close() } catch { /* ignore */ }
+    if (externalChromePid) {
+      try { await runCommand(["kill", "-TERM", String(externalChromePid)], 10_000) } catch { /* ignore */ }
+    }
+  }
+  const onSignal = () => { cleanup().finally(() => process.exit(1)) }
+  process.once("SIGINT", onSignal)
+  process.once("SIGTERM", onSignal)
+
   log(`Starting scenario: ${scenario.name}`)
   log(`Scenario file: ${scenarioPath}`)
   log(`Extension path: ${extensionPath}`)
   if (needsExtensionTab) {
-    log(`Session mode: CDP ${cdpPort} | Headed: yes (enforced)`)
+    log(`Session mode: CDP ${cdpPort} | Headed: ${headed ? "yes" : "no"}`)
   } else {
-    log(`Session: ${session} | Headed: yes (enforced)`)
+    log(`Session: ${session} | Headed: ${headed ? "yes" : "no"}`)
+  }
+  if (stepRetries > 0) {
+    log(`Step-level retries: ${stepRetries}`)
   }
 
   try {
     for (let i = 0; i < scenario.steps.length; i += 1) {
+      if (aborted) throw new Error("Scenario aborted by signal")
       const step = scenario.steps[i]
       const prefix = `[${i + 1}/${scenario.steps.length}] ${step.action}`
 
+      // --- Step-level retry for transient errors ---
+      const NON_RETRYABLE_ACTIONS = new Set(["close", "wait", "assertSnapshotContains"])
+      const canRetryStep = stepRetries > 0 && !NON_RETRYABLE_ACTIONS.has(step.action)
+      let stepAttempt = 0
+      const maxStepAttempts = canRetryStep ? stepRetries + 1 : 1
+
+      stepRetryLoop: for (stepAttempt = 1; stepAttempt <= maxStepAttempts; stepAttempt++) {
+      if (canRetryStep && stepAttempt > 1) {
+        const backoff = 500 * stepAttempt
+        log(`${prefix}: retry ${stepAttempt - 1}/${stepRetries} after ${backoff}ms backoff`)
+        await new Promise((r) => setTimeout(r, backoff))
+      }
+      try {
       switch (step.action) {
         case "open": {
           const url = step.url ?? scenario.settings?.url
@@ -268,17 +334,8 @@ export async function runScenario(
           }
 
           let res = isExtensionPage ? await client.openNewTab(url) : await client.open(url)
-          if (res.exitCode !== 0) {
-            const rawError = `${res.stderr}\n${res.stdout}`
-            if (isExtensionPage && isDaemonConflictError(rawError)) {
-              log(`${prefix}: daemon conflict detected, forcing restart and retrying once`)
-              await hardResetAgentBrowser(log)
-              const seedOpen = await client.open("https://example.com")
-              if (seedOpen.exitCode !== 0) {
-                throw new Error(`${prefix} retry seed open failed: ${seedOpen.stderr || seedOpen.stdout}`)
-              }
-              res = await client.openNewTab(url)
-            }
+          if (res.exitCode !== 0 && isExtensionPage && isDaemonConflictError(`${res.stderr}\n${res.stdout}`)) {
+            res = await handleDaemonConflict(client, prefix, url, log)
           }
           if (res.exitCode !== 0) throw new Error(`${prefix} failed: ${res.stderr || res.stdout}`)
           log(`${prefix}: opened ${url}`)
@@ -290,18 +347,8 @@ export async function runScenario(
           if (!url) throw new Error(`${prefix}: missing url`)
           log(`${prefix}: ${formatCommandForLog(["tab", "new", url])}`)
           let res = await client.openNewTab(url)
-          if (res.exitCode !== 0) {
-            const rawError = `${res.stderr}\n${res.stdout}`
-            const isExtensionPage = url.startsWith("chrome-extension://")
-            if (isExtensionPage && isDaemonConflictError(rawError)) {
-              log(`${prefix}: daemon conflict detected, forcing restart and retrying once`)
-              await hardResetAgentBrowser(log)
-              const seedOpen = await client.open("https://example.com")
-              if (seedOpen.exitCode !== 0) {
-                throw new Error(`${prefix} retry seed open failed: ${seedOpen.stderr || seedOpen.stdout}`)
-              }
-              res = await client.openNewTab(url)
-            }
+          if (res.exitCode !== 0 && url.startsWith("chrome-extension://") && isDaemonConflictError(`${res.stderr}\n${res.stdout}`)) {
+            res = await handleDaemonConflict(client, prefix, url, log)
           }
           if (res.exitCode !== 0) throw new Error(`${prefix} failed: ${res.stderr || res.stdout}`)
           log(`${prefix}: opened new tab ${url}`)
@@ -450,6 +497,15 @@ export async function runScenario(
         default:
           throw new Error(`${prefix}: unsupported action`)
       }
+      break stepRetryLoop // step succeeded, exit retry loop
+      } catch (stepErr) {
+        if (stepAttempt < maxStepAttempts) {
+          log(`${prefix}: step failed (${stepErr instanceof Error ? stepErr.message : String(stepErr)}), will retry`)
+          continue stepRetryLoop
+        }
+        throw stepErr // exhausted retries
+      }
+      } // end stepRetryLoop
     }
 
     const finished = Date.now()
@@ -458,12 +514,10 @@ export async function runScenario(
     log(`Scenario passed in ${durationMs}ms`)
 
     if (externalChromePid) {
-      try {
-        await runCommand(["kill", "-TERM", String(externalChromePid)], 10_000)
-      } catch {
-        // ignore cleanup failures
-      }
+      try { await runCommand(["kill", "-TERM", String(externalChromePid)], 10_000) } catch { /* ignore */ }
     }
+    process.removeListener("SIGINT", onSignal)
+    process.removeListener("SIGTERM", onSignal)
 
     return {
       ok: true,
@@ -481,19 +535,12 @@ export async function runScenario(
     const message = error instanceof Error ? error.message : String(error)
     log(`Scenario failed: ${message}`)
 
-    try {
-      await client.close()
-    } catch {
-      // ignore cleanup failures
-    }
-
+    try { await client.close() } catch { /* ignore */ }
     if (externalChromePid) {
-      try {
-        await runCommand(["kill", "-TERM", String(externalChromePid)], 10_000)
-      } catch {
-        // ignore cleanup failures
-      }
+      try { await runCommand(["kill", "-TERM", String(externalChromePid)], 10_000) } catch { /* ignore */ }
     }
+    process.removeListener("SIGINT", onSignal)
+    process.removeListener("SIGTERM", onSignal)
 
     return {
       ok: false,

@@ -32,7 +32,12 @@ export async function runCommand(command: string[], timeoutMs = 60_000): Promise
       }
 
       finalize(() => {
-        rejectResult(new Error(`Command timed out after ${timeoutMs}ms: ${command.join(" ")}`))
+        resolveResult({
+          command,
+          stdout,
+          stderr: stderr + `\n[timed out after ${timeoutMs}ms]`,
+          exitCode: 124,
+        })
       })
     }, timeoutMs)
 
