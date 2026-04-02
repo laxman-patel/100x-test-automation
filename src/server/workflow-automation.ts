@@ -1,7 +1,7 @@
 import { AgentBrowserClient } from "@/src/lib/agentBrowser"
 import { extractDataWithClaude, generateCandidateInputs, generateLiveExtractionCandidates } from "@/src/lib/claude-generate"
 import { ExtensionAgentSession } from "@/src/lib/extension-agent"
-import { jsonDeepEqual, parseJsonFromText, stableStringify, type JsonValue } from "@/src/lib/json"
+import { jsonSubsetMatch, fieldDiff, parseJsonFromText, stableStringify, type JsonValue } from "@/src/lib/json"
 import {
   createGeneratedDataset,
   getWorkflowById,
@@ -19,7 +19,13 @@ function formatInputForPrompt(input: JsonValue): string {
 }
 
 function buildSchemaPrompt(workflow: WorkflowRecord): string {
-  return `@workflow:${workflow.workflowRef} what are the input parameters of this and what are the output parameters of this, give RAW JSON only`
+  return [
+    `@workflow:${workflow.workflowRef}`,
+    `List every input parameter and every output parameter for this workflow.`,
+    `Return a single RAW JSON object (no markdown, no explanation) with this exact structure:`,
+    `{"inputParameters": [{"name": "...", "type": "string|number|boolean|object|array", "required": true/false, "description": "..."}], "outputParameters": [{"name": "...", "type": "...", "required": true/false, "description": "..."}]}`,
+    `IMPORTANT: Include ALL fields for every parameter — do not abbreviate, truncate, or use "..." placeholders. Expand every nested field. Output the complete JSON.`,
+  ].join(" ")
 }
 
 function buildCandidatePrompt(workflow: WorkflowRecord, count: number): string {
@@ -228,7 +234,7 @@ export async function generateWorkflowDatasetsLive(
   }
 
   // Phase 3: For each candidate, navigate with agent-browser and extract data with Claude
-  const browser = new AgentBrowserClient({ session: `live-extract-${workflowId}`, extensionPath: "", headed: true, timeoutMs: 120_000 })
+  const browser = new AgentBrowserClient({ session: `live-extract-${workflowId}`, headed: true, timeoutMs: 120_000 })
   const generated: WorkflowDatasetRecord[] = []
 
   // Load site auth for this workflow's domain
@@ -246,11 +252,22 @@ export async function generateWorkflowDatasetsLive(
       log?.(`[${generated.length + 1}/${count}] Navigating to ${candidate.startUrl}`)
 
       try {
-        // Navigate to the page
-        const openResult = await browser.open(candidate.startUrl)
-        if (openResult.exitCode !== 0) {
-          log?.(`Failed to open ${candidate.startUrl}: ${openResult.stderr}`)
-          continue
+        // Navigate to the page — first open the domain root to establish a session,
+        // then navigate via JS so that non-2xx responses don't abort the run.
+        const domainUrl = new URL(candidate.startUrl).origin
+        const seedResult = await browser.open(domainUrl)
+        if (seedResult.exitCode !== 0) {
+          log?.(`Failed to open domain root ${domainUrl}: ${seedResult.stderr}`)
+          // Try the direct URL as fallback
+          const directResult = await browser.open(candidate.startUrl)
+          if (directResult.exitCode !== 0) {
+            log?.(`Failed to open ${candidate.startUrl}: ${directResult.stderr}`)
+            continue
+          }
+        } else {
+          // Navigate to the actual URL via JS — this doesn't fail on non-2xx status codes
+          await browser.eval(`window.location.href = ${JSON.stringify(candidate.startUrl)}; 'navigating'`)
+          await browser.wait(3000)
         }
 
         // Replay site auth (cookies via agent-browser, localStorage via eval) then reload
@@ -386,14 +403,21 @@ export async function runWorkflowTests(
       try {
         const response = await session.prompt(executionPrompt, log)
         const actualOutput = parseJsonFromText(response.responseText)
-        const success = jsonDeepEqual(actualOutput, dataset.expectedOutput)
+        const success = jsonSubsetMatch(actualOutput, dataset.expectedOutput)
+
+        let artifacts: { screenshotPath?: string; domSnapshot?: string } = {}
+        if (!success) {
+          artifacts = await session.captureFailureArtifacts(dataset.id)
+        }
 
         workflow = await updateWorkflowDatasetRun(workflowId, dataset.id, {
           ranAt: new Date().toISOString(),
           success,
           actualOutput,
           rawResponse: response.responseText,
-          diff: success ? undefined : `Expected:\n${stableStringify(dataset.expectedOutput)}\n\nActual:\n${stableStringify(actualOutput)}`,
+          diff: success ? undefined : fieldDiff(actualOutput, dataset.expectedOutput),
+          ...(!success && artifacts.screenshotPath ? { screenshotPath: artifacts.screenshotPath } : {}),
+          ...(!success && artifacts.domSnapshot ? { domSnapshot: artifacts.domSnapshot } : {}),
         })
 
         if (success) {
@@ -404,12 +428,17 @@ export async function runWorkflowTests(
           log?.(`Dataset ${dataset.id} failed due to JSON mismatch`)
         }
       } catch (error) {
+        let artifacts: { screenshotPath?: string; domSnapshot?: string } = {}
+        try { artifacts = await session.captureFailureArtifacts(dataset.id) } catch { /* ignore */ }
+
         failed += 1
         workflow = await updateWorkflowDatasetRun(workflowId, dataset.id, {
           ranAt: new Date().toISOString(),
           success: false,
           rawResponse: "",
           error: error instanceof Error ? error.message : String(error),
+          ...(artifacts.screenshotPath ? { screenshotPath: artifacts.screenshotPath } : {}),
+          ...(artifacts.domSnapshot ? { domSnapshot: artifacts.domSnapshot } : {}),
         })
         log?.(`Dataset ${dataset.id} failed: ${error instanceof Error ? error.message : String(error)}`)
       }

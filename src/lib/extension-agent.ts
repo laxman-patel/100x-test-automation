@@ -543,6 +543,29 @@ export class ExtensionAgentSession {
     throw new Error("Timed out waiting for extension response.")
   }
 
+  async captureFailureArtifacts(datasetId: string): Promise<{ screenshotPath?: string; domSnapshot?: string }> {
+    const dir = resolve(process.cwd(), "artifacts/failure-captures")
+    mkdirSync(dir, { recursive: true })
+    const result: { screenshotPath?: string; domSnapshot?: string } = {}
+
+    try {
+      const screenshotPath = resolve(dir, `${datasetId}-${Date.now()}.png`)
+      await this.raw(["screenshot", screenshotPath], 15_000)
+      result.screenshotPath = screenshotPath
+    } catch {
+      // screenshot capture failed — continue
+    }
+
+    try {
+      const page = await this.getPageState()
+      result.domSnapshot = page.fullText?.slice(0, 50_000)
+    } catch {
+      // DOM snapshot failed — continue
+    }
+
+    return result
+  }
+
   async close(): Promise<void> {
     try {
       await this.raw(["close"], 15_000)

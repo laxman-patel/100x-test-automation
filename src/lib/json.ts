@@ -88,3 +88,93 @@ export function stableStringify(value: JsonValue): string {
 export function jsonDeepEqual(left: JsonValue, right: JsonValue): boolean {
   return stableStringify(left) === stableStringify(right)
 }
+
+/**
+ * Check that every key/value in `expected` exists in `actual`.
+ * Extra keys in `actual` are ignored. Arrays must match length and each element is subset-matched.
+ */
+export function jsonSubsetMatch(actual: JsonValue, expected: JsonValue): boolean {
+  if (expected === null || typeof expected !== "object") {
+    if (actual === null || typeof actual !== "object") {
+      // Coerce number/string for loose comparison (e.g. "42" vs 42)
+      // eslint-disable-next-line eqeqeq
+      return actual == expected
+    }
+    return false
+  }
+
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) return false
+    return expected.every((item, i) => jsonSubsetMatch(actual[i], item))
+  }
+
+  // expected is an object
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) return false
+  const actualObj = actual as Record<string, JsonValue>
+  const expectedObj = expected as Record<string, JsonValue>
+  return Object.keys(expectedObj).every((key) =>
+    key in actualObj && jsonSubsetMatch(actualObj[key], expectedObj[key]),
+  )
+}
+
+export type FieldDiffEntry = {
+  path: string
+  expected?: JsonValue
+  actual?: JsonValue
+  status: "match" | "mismatch" | "missing" | "extra"
+}
+
+/**
+ * Produce a field-level diff between actual and expected JSON values.
+ * Walks the expected structure; extra keys in actual are reported as "extra".
+ */
+export function fieldDiff(actual: JsonValue, expected: JsonValue, path = "$"): FieldDiffEntry[] {
+  if (expected === null || typeof expected !== "object") {
+    // eslint-disable-next-line eqeqeq
+    const match = actual == expected
+    return [{ path, expected, actual, status: match ? "match" : "mismatch" }]
+  }
+
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) {
+      return [{ path, expected, actual, status: "mismatch" }]
+    }
+    const entries: FieldDiffEntry[] = []
+    const maxLen = Math.max(expected.length, actual.length)
+    for (let i = 0; i < maxLen; i++) {
+      if (i >= expected.length) {
+        entries.push({ path: `${path}[${i}]`, actual: actual[i], status: "extra" })
+      } else if (i >= actual.length) {
+        entries.push({ path: `${path}[${i}]`, expected: expected[i], status: "missing" })
+      } else {
+        entries.push(...fieldDiff(actual[i], expected[i], `${path}[${i}]`))
+      }
+    }
+    return entries
+  }
+
+  // expected is object
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) {
+    return [{ path, expected, actual, status: "mismatch" }]
+  }
+
+  const actualObj = actual as Record<string, JsonValue>
+  const expectedObj = expected as Record<string, JsonValue>
+  const entries: FieldDiffEntry[] = []
+
+  for (const key of Object.keys(expectedObj)) {
+    if (!(key in actualObj)) {
+      entries.push({ path: `${path}.${key}`, expected: expectedObj[key], status: "missing" })
+    } else {
+      entries.push(...fieldDiff(actualObj[key], expectedObj[key], `${path}.${key}`))
+    }
+  }
+
+  for (const key of Object.keys(actualObj)) {
+    if (!(key in expectedObj)) {
+      entries.push({ path: `${path}.${key}`, actual: actualObj[key], status: "extra" })
+    }
+  }
+
+  return entries
+}

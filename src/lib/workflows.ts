@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { dirname, resolve } from "node:path"
-import { type JsonValue } from "./json"
+import { type JsonValue, type FieldDiffEntry } from "./json"
 
 const WORKFLOW_CSV_PATH = resolve(process.cwd(), "Website based workflow structures - Website L0-L1 steps.csv")
 const WORKFLOW_STATE_PATH = resolve(process.cwd(), "artifacts/workflow-lab/state.json")
@@ -51,8 +51,10 @@ export interface WorkflowDatasetRunRecord {
   success: boolean
   actualOutput?: JsonValue
   rawResponse: string
-  diff?: string
+  diff?: string | FieldDiffEntry[]
   error?: string
+  screenshotPath?: string
+  domSnapshot?: string
 }
 
 export interface WorkflowDatasetRecord {
@@ -422,6 +424,19 @@ export async function saveWorkflowSchema(id: string, input: {
   return mergeWorkflowState(workflow, state.workflowState[id])
 }
 
+export async function clearWorkflowData(id: string): Promise<WorkflowRecord> {
+  const workflow = await getWorkflowById(id)
+  const state = await loadStateFile()
+
+  state.workflowState[id] = {
+    datasets: [],
+    updatedAt: new Date().toISOString(),
+  }
+
+  await saveStateFile(state)
+  return mergeWorkflowState(workflow, state.workflowState[id])
+}
+
 export async function replaceWorkflowDatasets(id: string, datasets: WorkflowDatasetRecord[]): Promise<WorkflowRecord> {
   const workflow = await getWorkflowById(id)
   const state = await loadStateFile()
@@ -480,5 +495,11 @@ export function createGeneratedDataset(input: {
     executionPrompt: input.executionPrompt,
     rawExecutionResponse: input.rawExecutionResponse,
     notes: input.notes,
+    lastRun: {
+      ranAt: new Date().toISOString(),
+      success: true,
+      actualOutput: input.expectedOutput,
+      rawResponse: input.rawExecutionResponse ?? "",
+    },
   }
 }

@@ -55,8 +55,8 @@ export class AgentBrowserClient {
     this.headed = opts.headed ?? false
     this.timeoutMs = opts.timeoutMs ?? 90_000
 
-    if (!this.cdpPort && (!this.session || !this.extensionPath)) {
-      throw new Error("AgentBrowserClient requires either cdpPort or session+extensionPath")
+    if (!this.cdpPort && !this.session) {
+      throw new Error("AgentBrowserClient requires either cdpPort or session (with optional extensionPath)")
     }
   }
 
@@ -66,7 +66,10 @@ export class AgentBrowserClient {
     if (this.cdpPort) {
       base.push("--cdp", String(this.cdpPort))
     } else {
-      base.push("--session", this.session!, "--extension", this.extensionPath!)
+      base.push("--session", this.session!)
+      if (this.extensionPath) {
+        base.push("--extension", this.extensionPath)
+      }
       if (this.headed) {
         base.push("--headed")
       }

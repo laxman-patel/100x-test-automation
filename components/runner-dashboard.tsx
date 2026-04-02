@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, Database, KeyRound, LoaderCircle, Play, Plus, RefreshCw, Search, type LucideIcon } from "lucide-react"
+import { ChevronDown, ChevronRight, Database, KeyRound, LoaderCircle, Play, Plus, RefreshCw, Search, Trash2, type LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,12 +24,21 @@ interface WorkflowSchemaRecord {
   parsed: JsonValue
 }
 
+interface FieldDiffEntry {
+  path: string
+  expected?: JsonValue
+  actual?: JsonValue
+  status: "match" | "mismatch" | "missing" | "extra"
+}
+
 interface WorkflowDatasetRunRecord {
   ranAt: string
   success: boolean
   actualOutput?: JsonValue
-  diff?: string
+  diff?: string | FieldDiffEntry[]
   error?: string
+  screenshotPath?: string
+  domSnapshot?: string
 }
 
 interface WorkflowDatasetRecord {
@@ -789,6 +798,29 @@ export function RunnerDashboard() {
                       )}
                       Run tests
                     </Button>
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        setError(null)
+                        try {
+                          const res = await fetch(`/api/workflows/${selectedWorkflow.id}/clear`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                          })
+                          if (!res.ok) {
+                            const payload = (await res.json()) as { error?: string }
+                            throw new Error(payload.error ?? "Failed to clear workflow data")
+                          }
+                          await loadWorkflows()
+                        } catch (issue) {
+                          setError(issue instanceof Error ? issue.message : "Failed to clear workflow data")
+                        }
+                      }}
+                      disabled={busy}
+                    >
+                      <Trash2 className="mr-2 size-4" />
+                      Clear
+                    </Button>
                   </div>
                 ) : null}
               </div>
@@ -1013,10 +1045,75 @@ export function RunnerDashboard() {
                           {dataset.lastRun?.diff ? (
                             <div className="mt-3">
                               <h3 className="mb-1 text-xs font-medium text-muted-foreground">Last mismatch</h3>
-                              <pre className="overflow-x-auto bg-muted/40 p-3 text-xs leading-6 text-foreground">
-                                {dataset.lastRun.diff}
-                              </pre>
+                              {Array.isArray(dataset.lastRun.diff) ? (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-border text-left text-muted-foreground">
+                                        <th className="px-2 py-1">Path</th>
+                                        <th className="px-2 py-1">Expected</th>
+                                        <th className="px-2 py-1">Actual</th>
+                                        <th className="px-2 py-1">Status</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(dataset.lastRun.diff as FieldDiffEntry[])
+                                        .filter((e) => e.status !== "match")
+                                        .map((entry, i) => (
+                                          <tr key={i} className="border-b border-border/50">
+                                            <td className="px-2 py-1 font-mono">{entry.path}</td>
+                                            <td className="px-2 py-1 font-mono text-red-400">
+                                              {entry.expected !== undefined ? JSON.stringify(entry.expected) : "—"}
+                                            </td>
+                                            <td className="px-2 py-1 font-mono text-green-400">
+                                              {entry.actual !== undefined ? JSON.stringify(entry.actual) : "—"}
+                                            </td>
+                                            <td className="px-2 py-1">
+                                              <span className={
+                                                entry.status === "mismatch" ? "text-red-400" :
+                                                entry.status === "missing" ? "text-yellow-400" :
+                                                "text-blue-400"
+                                              }>
+                                                {entry.status}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : (
+                                <pre className="overflow-x-auto bg-muted/40 p-3 text-xs leading-6 text-foreground">
+                                  {dataset.lastRun.diff}
+                                </pre>
+                              )}
                             </div>
+                          ) : null}
+                          {dataset.lastRun?.screenshotPath ? (
+                            <div className="mt-3">
+                              <h3 className="mb-1 text-xs font-medium text-muted-foreground">Failure screenshot</h3>
+                              <a
+                                href={`/api/artifacts/${dataset.lastRun.screenshotPath.split("failure-captures/").pop()}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <img
+                                  src={`/api/artifacts/${dataset.lastRun.screenshotPath.split("failure-captures/").pop()}`}
+                                  alt="Failure screenshot"
+                                  className="max-h-48 rounded border border-border"
+                                />
+                              </a>
+                            </div>
+                          ) : null}
+                          {dataset.lastRun?.domSnapshot ? (
+                            <details className="mt-3">
+                              <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                                DOM snapshot
+                              </summary>
+                              <pre className="mt-1 max-h-48 overflow-auto bg-muted/40 p-3 text-xs leading-6 text-foreground">
+                                {dataset.lastRun.domSnapshot.slice(0, 5000)}
+                              </pre>
+                            </details>
                           ) : null}
                           {dataset.lastRun?.error ? (
                             <p className="mt-2 text-sm text-foreground">{dataset.lastRun.error}</p>
