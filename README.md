@@ -8,10 +8,11 @@ Next.js web UI + workflow test lab for browser-driven extension workflows.
 - Workflow catalog sourced from `Website based workflow structures - Website L0-L1 steps.csv`.
 - Persistent workflow schema and dataset storage in `artifacts/workflow-lab/state.json`.
 - API routes to discover workflow input/output schemas through the extension agent.
-- API routes to generate live workflow datasets and replay them as tests.
+- API routes to generate datasets via extension execution or live website extraction.
 - API routes to list scenario files and run scenarios.
+- Per-workflow **Clear** button to reset schema, datasets, and run history.
 - Live log polling and status reporting (running/passed/failed).
-- Existing CLI scripts for direct terminal execution.
+- CLI test runner with pre-flight checks, step-level retry, and graceful shutdown.
 
 ## Prerequisites
 
@@ -37,16 +38,13 @@ bun install
 bun run dev
 ```
 
-Open `http://localhost:3000`, choose a scenario, and click **Run Scenario**.
+Open `http://localhost:3000`, choose a workflow, and use the action buttons:
 
-The main web UI now focuses on workflow testing:
-
-- browse workflows from the CSV catalog
-- add workflows that are not in the CSV yet
-- start a manual authentication capture, log in in the opened Chrome window, and save replay tokens for future runs
-- discover workflow input/output schema through the extension agent
-- generate at least 3 datasets per workflow when the extension can execute them
-- rerun saved datasets and compare live RAW JSON output with the saved expected output
+- **Discover schema** — extract input/output parameters via the extension agent
+- **Generate datasets** — create test datasets via extension execution
+- **Generate (live)** — navigate to real websites and extract structured data with Claude
+- **Run tests** — replay saved datasets and compare live output with expected output
+- **Clear** — reset all schema, datasets, and run history for a workflow
 
 Workflow state is saved to:
 
@@ -64,16 +62,38 @@ bun run start
 ## Run a scenario from CLI
 
 ```bash
-bun run run:scenario
+bun run test
 ```
 
-Custom scenario/session examples:
+Full usage:
+
+```
+Usage: bun run test [scenario-file] [options]
+
+Arguments:
+  scenario-file          Path to a scenario JSON file
+                         (default: scenarios/smoke-extension-toggle.json)
+
+Options:
+  --session <name>       Custom session name for this run
+  --headless             Run browser in headless mode (default: headed)
+  --retry <n>            Retry each step up to <n> times on transient errors (default: 0)
+  --timeout <ms>         Override the default agent-browser timeout (default: 90000)
+  --skip-preflight       Skip the pre-flight dependency check
+  -h, --help             Show this help message
+```
+
+Examples:
 
 ```bash
-bun run run:scenario scenarios/smoke-extension-toggle.json --session my-test-session
+bun run test scenarios/smoke-extension-toggle.json
+bun run test scenarios/my-flow.json --headless --retry 2
+bun run test --session my-session --timeout 120000
 ```
 
-If a scenario contains `chrome-extension://...` URLs, the runner auto-switches to CDP mode and launches Chromium with the unpacked extension preloaded. You can override the port with `RUNNER_CDP_PORT`.
+The legacy `bun run run:scenario` alias still works.
+
+If a scenario contains `chrome-extension://...` URLs, the runner auto-switches to CDP mode and launches Chromium with the unpacked extension preloaded. Override the port with `RUNNER_CDP_PORT`.
 
 ## Open extension page and type into prompt
 
